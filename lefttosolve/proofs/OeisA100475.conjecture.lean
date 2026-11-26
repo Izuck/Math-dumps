@@ -3,9 +3,14 @@ import FormalConjectures.OEIS.«100475»
 -- Problem: Prime-th recurrence with reversal at each step (OEIS A100475), DISPROOF.
 -- Upstream: formal-conjectures FormalConjectures/OEIS/100475.lean (declaration OeisA100475.conjecture)
 -- Idea: k -> reverse(p_k) never shortens the decimal length, so a periodic tail has constant
--- length d and lives among k with 10^(d-1) <= k <= pi(10^d). Since pi(10^d) < 10^(d-1) for
--- d >= 5 (kernel-sieved counts at 10^5, 10^6, 2*10^6 plus the Chebyshev bound theta(x) <= x log 4),
--- every tail entry is <= pi(10^4) = 1229, and a kernel check shows each such orbit leaves [1,1229].
+-- length d and lives among k with 10^(d-1) <= k <= pi(10^d). But pi(10^d) < 10^(d-1) for d >= 5:
+-- d = 5 by a kernel count, d = 6 from a kernel count up to 5*10^5 plus one doubling step
+-- (pi(2n) - pi(n)) log n <= n log 4 (central binomial), d = 7 from pi(10^4) = 1229 and ten
+-- doubling steps, d >= 8 by induction with theta(x) <= x log 4. So every tail entry is at most
+-- pi(10^4) = 1229, and a kernel check shows each such orbit leaves [1, 1229].
+
+-- The prime bit mask (namespace OMA.SieveB) is a bignum sieve of Eratosthenes with a proved spec;
+-- its bits are counted by a vectorised popcount (16 strides, reduction mod 2^16 - 1).
 
 namespace OMA.SieveB
 
@@ -213,7 +218,7 @@ theorem testBit_base (N i : ℕ) (hN : N < 16) :
     (10412 % 2 ^ (N + 1)).testBit i = true ↔ i ≤ N ∧ i.Prime := by
   rw [Nat.testBit_mod_two_pow, Bool.and_eq_true, decide_eq_true_eq, Nat.lt_succ_iff]
   by_cases hi : i < 16
-  · interval_cases i <;> simp (decide := true)
+  · interval_cases i <;> simp +decide
   · have : Nat.testBit 10412 i = false := by
       apply Nat.testBit_lt_two_pow
       calc 10412 < 2 ^ 16 := by norm_num
@@ -314,129 +319,79 @@ theorem bl_split (x a b off : ℕ) :
     intro i _
     simp [add_assoc]
 
-theorem bl_top {x m : ℕ} (hx : x ≠ 0) (hm : x < 2 ^ m) (off : ℕ) :
-    bl x m off = bl (x - 2 ^ Nat.log2 x) (Nat.log2 x) off ++ [off + Nat.log2 x] := by
-  have hlt : Nat.log2 x < m := (Nat.log2_lt hx).mpr hm
-  have hlo : 2 ^ Nat.log2 x ≤ x := Nat.log2_self_le hx
-  have hhi : x < 2 ^ (Nat.log2 x + 1) := Nat.lt_log2_self
-  obtain ⟨t, rfl⟩ : ∃ t, m = Nat.log2 x + 1 + t := ⟨m - (Nat.log2 x + 1), by omega⟩
-  unfold bl
-  rw [List.range_add, List.filter_append, List.range_succ, List.filter_append]
-  have h1 : List.filter (fun i => x.testBit i)
-      (List.map (fun i => Nat.log2 x + 1 + i) (List.range t)) = [] := by
-    rw [List.filter_eq_nil_iff]
-    intro a ha
-    rw [List.mem_map] at ha
-    obtain ⟨b, _, rfl⟩ := ha
-    rw [Bool.not_eq_true]
-    apply Nat.testBit_lt_two_pow
-    calc x < 2 ^ (Nat.log2 x + 1) := hhi
-      _ ≤ 2 ^ (Nat.log2 x + 1 + b) := Nat.pow_le_pow_right (by norm_num) (by omega)
-  have h2 : List.filter (fun i => x.testBit i) [Nat.log2 x] = [Nat.log2 x] := by
-    simp [Nat.testBit_log2 hx]
-  have h3 : List.filter (fun i => x.testBit i) (List.range (Nat.log2 x)) =
-      List.filter (fun i => (x - 2 ^ Nat.log2 x).testBit i) (List.range (Nat.log2 x)) := by
-    apply List.filter_congr
-    intro i hi
-    rw [List.mem_range] at hi
-    have hxe : x = 2 ^ Nat.log2 x + (x - 2 ^ Nat.log2 x) := by omega
-    conv_lhs => rw [hxe]
-    exact Nat.testBit_two_pow_add_gt hi _
-  rw [h1, h2, h3]
-  simp
-
-/-- Extract the set bits of a small word, highest first, consing onto `acc`.
-First argument is fuel (any bound on the bit length). -/
-def bitsBlock : ℕ → ℕ → ℕ → List ℕ → List ℕ
-  | 0, _, _, acc => acc
-  | f + 1, x, off, acc =>
-    cond (Nat.beq x 0) acc
-      (bitsBlock f (x - 2 ^ Nat.log2 x) off ((off + Nat.log2 x) :: acc))
+theorem bl_one (x off : ℕ) (hx : x < 2) (h0 : x ≠ 0) : bl x 1 off = [off] := by
+  obtain rfl : x = 1 := by omega
+  simp [bl]
 
 theorem beq_zero_of_ne {x : ℕ} (hx : x ≠ 0) : Nat.beq x 0 = false := by
   cases x with
   | zero => exact absurd rfl hx
   | succ n => rfl
 
-theorem bitsBlock_eq : ∀ (f x m off : ℕ) (acc : List ℕ), x < 2 ^ m → m ≤ f →
-    bitsBlock f x off acc = bl x m off ++ acc := by
-  intro f
-  induction f with
-  | zero =>
-    intro x m off acc hx hm
-    obtain rfl : m = 0 := by omega
-    simp [bitsBlock, bl]
-  | succ f ih =>
-    intro x m off acc hx hm
-    rw [bitsBlock]
-    by_cases h0 : x = 0
-    · subst h0
-      rw [bl_zero]; rfl
-    · rw [beq_zero_of_ne h0, cond_false]
-      have hlt : Nat.log2 x < m := (Nat.log2_lt h0).mpr hx
-      have hlo : 2 ^ Nat.log2 x ≤ x := Nat.log2_self_le h0
-      have hhi : x < 2 ^ (Nat.log2 x + 1) := Nat.lt_log2_self
-      have hx' : x - 2 ^ Nat.log2 x < 2 ^ Nat.log2 x := by
-        rw [pow_succ] at hhi; omega
-      rw [ih _ (Nat.log2 x) off _ hx' (by omega), bl_top h0 hx off]
-      simp
+/-- Extract the set bits of `x < 2 ^ 2 ^ k` by recursive halving, consing onto `acc`.
+Written with raw recursors: this unfolds much faster in the kernel than
+compiled structural recursion. -/
+def bitsA (k : ℕ) : ℕ → ℕ → List ℕ → List ℕ :=
+  Nat.rec (motive := fun _ => ℕ → ℕ → List ℕ → List ℕ)
+    (fun x off acc => Bool.rec (motive := fun _ => List ℕ) (off :: acc) acc (Nat.beq x 0))
+    (fun k ih x off acc => Bool.rec (motive := fun _ => List ℕ)
+      (ih (Nat.mod x (Nat.pow 2 (Nat.pow 2 k))) off
+        (ih (Nat.shiftRight x (Nat.pow 2 k)) (Nat.add off (Nat.pow 2 k)) acc))
+      acc (Nat.beq x 0)) k
 
-/-- Extract the set bits of `x < 2 ^ (B * 2 ^ k)` by recursive halving down to
-blocks of `B` bits. -/
-def bitsAux (B : ℕ) : ℕ → ℕ → ℕ → List ℕ → List ℕ
-  | 0, x, off, acc => bitsBlock B x off acc
-  | k + 1, x, off, acc =>
-    cond (Nat.beq x 0) acc
-      (bitsAux B k (x % 2 ^ (B * 2 ^ k)) off
-        (bitsAux B k (Nat.shiftRight x (B * 2 ^ k)) (off + B * 2 ^ k) acc))
+theorem bitsA_zero (x off : ℕ) (acc : List ℕ) :
+    bitsA 0 x off acc = cond (Nat.beq x 0) acc (off :: acc) := by
+  cases h : Nat.beq x 0 <;> simp [bitsA, h]
 
-theorem bitsAux_eq (B : ℕ) : ∀ (k x off : ℕ) (acc : List ℕ), x < 2 ^ (B * 2 ^ k) →
-    bitsAux B k x off acc = bl x (B * 2 ^ k) off ++ acc := by
+theorem bitsA_succ (k x off : ℕ) (acc : List ℕ) :
+    bitsA (k + 1) x off acc = cond (Nat.beq x 0) acc
+      (bitsA k (x % 2 ^ 2 ^ k) off (bitsA k (Nat.shiftRight x (2 ^ k)) (off + 2 ^ k) acc)) := by
+  cases h : Nat.beq x 0
+  · show Bool.rec (motive := fun _ => List ℕ) _ _ (Nat.beq x 0) = _
+    rw [h]; rfl
+  · show Bool.rec (motive := fun _ => List ℕ) _ _ (Nat.beq x 0) = _
+    rw [h]; rfl
+
+theorem bitsA_eq : ∀ (k x off : ℕ) (acc : List ℕ), x < 2 ^ 2 ^ k →
+    bitsA k x off acc = bl x (2 ^ k) off ++ acc := by
   intro k
   induction k with
   | zero =>
     intro x off acc hx
-    rw [bitsAux]
-    exact bitsBlock_eq B x _ off acc hx (by simp)
+    rw [bitsA_zero]
+    by_cases h0 : x = 0
+    · subst h0
+      rw [bl_zero]; rfl
+    · rw [beq_zero_of_ne h0, cond_false, pow_zero, bl_one x off (by simpa using hx) h0]
+      rfl
   | succ k ih =>
     intro x off acc hx
-    rw [bitsAux]
+    rw [bitsA_succ]
     by_cases h0 : x = 0
     · subst h0
       rw [bl_zero]; rfl
     · rw [beq_zero_of_ne h0, cond_false]
-      have hW : B * 2 ^ (k + 1) = B * 2 ^ k + B * 2 ^ k := by rw [pow_succ]; ring
-      have h1 : x % 2 ^ (B * 2 ^ k) < 2 ^ (B * 2 ^ k) := Nat.mod_lt _ (Nat.two_pow_pos _)
-      have h2 : Nat.shiftRight x (B * 2 ^ k) < 2 ^ (B * 2 ^ k) := by
-        show x >>> (B * 2 ^ k) < _
+      have hW : 2 ^ (k + 1) = 2 ^ k + 2 ^ k := by rw [pow_succ]; ring
+      have h1 : x % 2 ^ 2 ^ k < 2 ^ 2 ^ k := Nat.mod_lt _ (Nat.two_pow_pos _)
+      have h2 : Nat.shiftRight x (2 ^ k) < 2 ^ 2 ^ k := by
+        show x >>> (2 ^ k) < _
         rw [Nat.shiftRight_eq_div_pow]
         apply Nat.div_lt_of_lt_mul
         rw [← pow_add, ← hW]
         exact hx
       rw [ih _ _ _ h1, ih _ _ _ h2, hW, bl_split, List.append_assoc]
 
-theorem primeList_width (N : ℕ) : N + 1 ≤ 1024 * 2 ^ (Nat.log2 N - 9) := by
-  have hhi : N < 2 ^ (Nat.log2 N + 1) := Nat.lt_log2_self
-  by_cases h : 9 ≤ Nat.log2 N
-  · have e : 2 ^ (Nat.log2 N + 1) = 1024 * 2 ^ (Nat.log2 N - 9) := by
-      have : Nat.log2 N + 1 = 10 + (Nat.log2 N - 9) := by omega
-      rw [this, pow_add]; norm_num
-    omega
-  · have h1 : 2 ^ (Nat.log2 N + 1) ≤ 2 ^ 10 := Nat.pow_le_pow_right (by norm_num) (by omega)
-    have h2 : 1 ≤ 2 ^ (Nat.log2 N - 9) := Nat.one_le_two_pow
-    omega
-
 /-- The primes `≤ N`, ascending. -/
-def primeList (N : ℕ) : List ℕ := bitsAux 1024 (Nat.log2 N - 9) (primeBits N) 0 []
+def primeList (N : ℕ) : List ℕ := bitsA (Nat.log2 N + 1) (primeBits N) 0 []
 
 theorem primeList_eq (N : ℕ) :
     primeList N = (List.range (N + 1)).filter (fun m => decide m.Prime) := by
-  have hW : N + 1 ≤ 1024 * 2 ^ (Nat.log2 N - 9) := primeList_width N
-  have hlt : primeBits N < 2 ^ (1024 * 2 ^ (Nat.log2 N - 9)) :=
+  have hW : N + 1 ≤ 2 ^ (Nat.log2 N + 1) := Nat.lt_log2_self
+  have hlt : primeBits N < 2 ^ 2 ^ (Nat.log2 N + 1) :=
     lt_of_lt_of_le (primeBits_lt N) (Nat.pow_le_pow_right (by norm_num) hW)
   unfold primeList
-  rw [bitsAux_eq _ _ _ _ _ hlt, List.append_nil]
-  obtain ⟨t, ht⟩ : ∃ t, 1024 * 2 ^ (Nat.log2 N - 9) = N + 1 + t := ⟨_, (Nat.add_sub_cancel' hW).symm⟩
+  rw [bitsA_eq _ _ _ _ hlt, List.append_nil]
+  obtain ⟨t, ht⟩ : ∃ t, 2 ^ (Nat.log2 N + 1) = N + 1 + t := ⟨_, (Nat.add_sub_cancel' hW).symm⟩
   unfold bl
   rw [ht, List.range_add, List.filter_append]
   have h1 : List.filter (fun i => (primeBits N).testBit i)
@@ -462,48 +417,61 @@ theorem primeList_eq (N : ℕ) :
 
 /- ## Counting the set bits -/
 
-def cntBlock : ℕ → ℕ → ℕ
-  | 0, _ => 0
-  | f + 1, x => cond (Nat.beq x 0) 0 (cntBlock f (x - 2 ^ Nat.log2 x) + 1)
+/-- Number of set bits of `x < 2 ^ 2 ^ k`, by recursive halving. -/
+def cntA (k : ℕ) : ℕ → ℕ :=
+  Nat.rec (motive := fun _ => ℕ → ℕ)
+    (fun x => x)
+    (fun k ih x => Bool.rec (motive := fun _ => ℕ)
+      (Nat.add (ih (Nat.mod x (Nat.pow 2 (Nat.pow 2 k)))) (ih (Nat.shiftRight x (Nat.pow 2 k))))
+      0 (Nat.beq x 0)) k
 
-theorem length_bitsBlock : ∀ (f x off : ℕ) (acc : List ℕ),
-    (bitsBlock f x off acc).length = cntBlock f x + acc.length := by
-  intro f
-  induction f with
-  | zero => intro x off acc; simp [bitsBlock, cntBlock]
-  | succ f ih =>
-    intro x off acc
-    rw [bitsBlock, cntBlock]
-    cases Nat.beq x 0
-    · simp only [cond_false]
-      rw [ih, List.length_cons]; omega
-    · simp
+theorem cntA_succ (k x : ℕ) :
+    cntA (k + 1) x = cond (Nat.beq x 0) 0
+      (cntA k (x % 2 ^ 2 ^ k) + cntA k (Nat.shiftRight x (2 ^ k))) := by
+  cases h : Nat.beq x 0
+  · show Bool.rec (motive := fun _ => ℕ) _ _ (Nat.beq x 0) = _
+    rw [h]; rfl
+  · show Bool.rec (motive := fun _ => ℕ) _ _ (Nat.beq x 0) = _
+    rw [h]; rfl
 
-def cntAux (B : ℕ) : ℕ → ℕ → ℕ
-  | 0, x => cntBlock B x
-  | k + 1, x =>
-    cond (Nat.beq x 0) 0
-      (cntAux B k (x % 2 ^ (B * 2 ^ k)) + cntAux B k (Nat.shiftRight x (B * 2 ^ k)))
-
-theorem length_bitsAux (B : ℕ) : ∀ (k x off : ℕ) (acc : List ℕ),
-    (bitsAux B k x off acc).length = cntAux B k x + acc.length := by
+theorem length_bitsA : ∀ (k x off : ℕ) (acc : List ℕ), x < 2 ^ 2 ^ k →
+    (bitsA k x off acc).length = cntA k x + acc.length := by
   intro k
   induction k with
-  | zero => intro x off acc; rw [bitsAux, cntAux, length_bitsBlock]
+  | zero =>
+    intro x off acc hx
+    rw [bitsA_zero]
+    have hx2 : x < 2 := by simpa using hx
+    by_cases h0 : x = 0
+    · subst h0; simp [cntA]
+    · obtain rfl : x = 1 := by omega
+      show (off :: acc).length = 1 + acc.length
+      rw [List.length_cons]; omega
   | succ k ih =>
-    intro x off acc
-    rw [bitsAux, cntAux]
-    cases Nat.beq x 0
-    · simp only [cond_false]
-      rw [ih, ih]; omega
-    · simp
+    intro x off acc hx
+    rw [bitsA_succ, cntA_succ]
+    by_cases h0 : x = 0
+    · subst h0; simp
+    · rw [beq_zero_of_ne h0, cond_false, cond_false]
+      have hW : 2 ^ (k + 1) = 2 ^ k + 2 ^ k := by rw [pow_succ]; ring
+      have h1 : x % 2 ^ 2 ^ k < 2 ^ 2 ^ k := Nat.mod_lt _ (Nat.two_pow_pos _)
+      have h2 : Nat.shiftRight x (2 ^ k) < 2 ^ 2 ^ k := by
+        show x >>> (2 ^ k) < _
+        rw [Nat.shiftRight_eq_div_pow]
+        apply Nat.div_lt_of_lt_mul
+        rw [← pow_add, ← hW]
+        exact hx
+      rw [ih _ _ _ h1, ih _ _ _ h2]; omega
 
 /-- The number of primes `≤ N`. -/
-def primeCount (N : ℕ) : ℕ := cntAux 1024 (Nat.log2 N - 9) (primeBits N)
+def primeCount (N : ℕ) : ℕ := cntA (Nat.log2 N + 1) (primeBits N)
 
 theorem primeCount_eq_length (N : ℕ) : primeCount N = (primeList N).length := by
+  have hW : N + 1 ≤ 2 ^ (Nat.log2 N + 1) := Nat.lt_log2_self
+  have hlt : primeBits N < 2 ^ 2 ^ (Nat.log2 N + 1) :=
+    lt_of_lt_of_le (primeBits_lt N) (Nat.pow_le_pow_right (by norm_num) hW)
   unfold primeCount primeList
-  rw [length_bitsAux]; rfl
+  rw [length_bitsA _ _ _ _ hlt]; rfl
 
 theorem primeCount_eq (N : ℕ) : primeCount N = Nat.count Nat.Prime (N + 1) := by
   rw [primeCount_eq_length, primeList_eq, ← List.countP_eq_length_filter]
@@ -545,21 +513,19 @@ lemma prime_mod_ten {p : ℕ} (hp : p.Prime) : p % 10 ≠ 0 := by
   have h5 := (Nat.prime_dvd_prime_iff_eq Nat.prime_five hp).mp (dvd_trans (by norm_num) h10)
   omega
 
-/-- one step of the recurrence, for a positive index -/
-noncomputable def step (k : ℕ) : ℕ := reverseDigits (Nat.nth Nat.Prime (k - 1))
 
-lemma len_step (k : ℕ) : len (step k) = len (Nat.nth Nat.Prime (k - 1)) :=
+lemma len_step (k : ℕ) : len (reverseDigits (Nat.nth Nat.Prime (k - 1))) = len (Nat.nth Nat.Prime (k - 1)) :=
   len_reverse (prime_mod_ten (Nat.prime_nth_prime _))
 
 lemma le_nth_pred (k : ℕ) : k ≤ Nat.nth Nat.Prime (k - 1) := by
   have := Nat.add_two_le_nth_prime (k - 1)
   omega
 
-lemma len_le_len_step (k : ℕ) : len k ≤ len (step k) := by
+lemma len_le_len_step (k : ℕ) : len k ≤ len (reverseDigits (Nat.nth Nat.Prime (k - 1))) := by
   rw [len_step]; exact len_mono (le_nth_pred k)
 
-lemma step_pos (k : ℕ) : 0 < step k := by
-  rcases Nat.eq_zero_or_pos (step k) with h | h
+lemma step_pos (k : ℕ) : 0 < reverseDigits (Nat.nth Nat.Prime (k - 1)) := by
+  rcases Nat.eq_zero_or_pos (reverseDigits (Nat.nth Nat.Prime (k - 1))) with h | h
   · have h1 := len_step k
     rw [h] at h1
     have h2 : len (Nat.nth Nat.Prime (k - 1)) = 0 := by rw [← h1]; exact len_eq_zero.mpr rfl
@@ -569,7 +535,7 @@ lemma step_pos (k : ℕ) : 0 < step k := by
   · exact h
 
 lemma aStartAt_succ (x n : ℕ) :
-    aStartAt x (n + 1) = if aStartAt x n = 0 then 0 else step (aStartAt x n) := rfl
+    aStartAt x (n + 1) = if aStartAt x n = 0 then 0 else reverseDigits (Nat.nth Nat.Prime (aStartAt x n - 1)) := rfl
 
 lemma aStartAt_pos {x : ℕ} (hx : 0 < x) (n : ℕ) : 0 < aStartAt x n := by
   induction n with
@@ -577,7 +543,7 @@ lemma aStartAt_pos {x : ℕ} (hx : 0 < x) (n : ℕ) : 0 < aStartAt x n := by
   | succ n ih => rw [aStartAt_succ, if_neg (by omega)]; exact step_pos _
 
 lemma aStartAt_succ_pos {x : ℕ} (hx : 0 < x) (n : ℕ) :
-    aStartAt x (n + 1) = step (aStartAt x n) := by
+    aStartAt x (n + 1) = reverseDigits (Nat.nth Nat.Prime (aStartAt x n - 1)) := by
   rw [aStartAt_succ, if_neg (by have := aStartAt_pos hx n; omega)]
 
 lemma len_aStartAt_mono {x : ℕ} (hx : 0 < x) {m n : ℕ} (h : m ≤ n) :
@@ -882,53 +848,262 @@ lemma pi_all (h7 : 10 * Nat.primeCounting (10 ^ 7) < 10 ^ 7) :
   | base => exact h7
   | succ n hn ih => exact pi_step hn ih
 
-/-- `π (10 ^ 7) < 10 ^ 6` from prime counts up to `2 * 10 ^ 6` only. -/
-lemma pi_seven (K5 : Nat.primeCounting 100000 = 9592) (K6 : Nat.primeCounting 1000000 = 78498)
-    (K2 : Nat.primeCounting 2000000 = 148933) :
-    10 * Nat.primeCounting (10 ^ 7) < 10 ^ 7 := by
-  have t1 := pi_sub_mul_log_le (a := 100000) (b := 1000000) (by norm_num)
-  have t2 := pi_sub_mul_log_le (a := 1000000) (b := 2000000) (by norm_num)
-  have t0 := Chebyshev.theta_nonneg ((100000 : ℕ) : ℝ)
-  have l5 : Real.log ((100000 : ℕ) : ℝ) = 5 * Real.log 10 := by
-    have : ((100000 : ℕ) : ℝ) = 10 ^ 5 := by norm_num
+lemma theta_double (n : ℕ) :
+    Chebyshev.theta ((2 * n : ℕ) : ℝ) ≤ Chebyshev.theta (n : ℝ) + 2 * n * Real.log 2 := by
+  rw [Chebyshev.theta_eq_log_primorial, Chebyshev.theta_eq_log_primorial, Nat.floor_natCast,
+    Nat.floor_natCast]
+  have h1 : primorial (2 * n) ≤ primorial n * 4 ^ n := by
+    have hd := primorial_add_dvd (le_refl n)
+    rw [← two_mul] at hd
+    have h := Nat.le_of_dvd (Nat.mul_pos (primorial_pos n) (Nat.choose_pos (by omega))) hd
+    have hc : (2 * n).choose n ≤ 4 ^ n := Nat.centralBinom_le_four_pow n
+    exact h.trans (Nat.mul_le_mul_left _ hc)
+  have h2 : (primorial (2 * n) : ℝ) ≤ primorial n * 4 ^ n := by exact_mod_cast h1
+  have hp : (0 : ℝ) < primorial (2 * n) := by exact_mod_cast primorial_pos _
+  have hq : (0 : ℝ) < primorial n := by exact_mod_cast primorial_pos _
+  have h3 := Real.log_le_log hp h2
+  rw [Real.log_mul hq.ne' (by positivity), Real.log_pow] at h3
+  have h4 : Real.log 4 = 2 * Real.log 2 := by
+    have : (4 : ℝ) = 2 ^ 2 := by norm_num
     rw [this, Real.log_pow]; push_cast; ring
-  have l6 : Real.log ((1000000 : ℕ) : ℝ) = 6 * Real.log 10 := by
-    have : ((1000000 : ℕ) : ℝ) = 10 ^ 6 := by norm_num
-    rw [this, Real.log_pow]; push_cast; ring
-  have l2 : Real.log ((2000000 : ℕ) : ℝ) = Real.log 2 + 6 * Real.log 10 := by
-    have : ((2000000 : ℕ) : ℝ) = 2 * 10 ^ 6 := by norm_num
-    rw [this, Real.log_mul (by norm_num) (by norm_num), Real.log_pow]; push_cast; ring
-  rw [K5, K6, l5] at t1
-  rw [K6, K2, l6] at t2
-  have hT : (767140 : ℝ) * Real.log 10 ≤ Chebyshev.theta ((2000000 : ℕ) : ℝ) := by
-    push_cast at t1 t2 t0 ⊢
-    linarith
-  have hs := step_bound (a := 2000000) (b := 10 ^ 7) (by norm_num) _ hT
-  rw [K2, l2] at hs
-  have hlog := log_ratio 33 10 (by norm_num)
-  have hL := log10_pos
-  have h2 := log2_pos
-  suffices hB : (Nat.primeCounting (10 ^ 7) : ℝ) < 10 ^ 6 by
-    have : Nat.primeCounting (10 ^ 7) < 10 ^ 6 := by exact_mod_cast hB
-    omega
-  generalize (Nat.primeCounting (10 ^ 7) : ℝ) = B at hs ⊢
-  push_cast at hs hlog
-  by_contra hc
-  have hc' : (851067 : ℝ) ≤ B - 148933 := by linarith
-  have e1 := mul_le_mul_of_nonneg_right hc' (by linarith : (0 : ℝ) ≤ Real.log 2 + 6 * Real.log 10)
+  rw [h4] at h3
   linarith
 
-lemma pi_bounds (K5 : Nat.primeCounting 100000 = 9592) (K6 : Nat.primeCounting 1000000 = 78498)
-    (K2 : Nat.primeCounting 2000000 = 148933) :
+/-- doubling step: `(π (2 n) - π n) * k ≤ 2 n` when `2 ^ k ≤ n` -/
+lemma dbl (n k : ℕ) (hk : 2 ^ k ≤ n) :
+    Nat.primeCounting (2 * n) * k ≤ Nat.primeCounting n * k + 2 * n := by
+  have h1 := pi_sub_mul_log_le (a := n) (b := 2 * n) (by omega)
+  have h2 := theta_double n
+  have hn : 0 < n := lt_of_lt_of_le (by positivity) hk
+  have hlog : k * Real.log 2 ≤ Real.log n := by
+    rw [← Real.log_pow]
+    exact Real.log_le_log (by positivity) (by exact_mod_cast hk)
+  have hmono : (Nat.primeCounting n : ℝ) ≤ Nat.primeCounting (2 * n) := by
+    exact_mod_cast Nat.monotone_primeCounting (show n ≤ 2 * n by omega)
+  have e := mul_le_mul_of_nonneg_left hlog (sub_nonneg.2 hmono)
+  have e2 : (((Nat.primeCounting (2 * n) : ℝ) - Nat.primeCounting n) * k) * Real.log 2
+      ≤ (2 * n) * Real.log 2 := by linarith
+  have e3 := le_of_mul_le_mul_right e2 log2_pos
+  have e4 : ((Nat.primeCounting (2 * n) * k : ℕ) : ℝ)
+      ≤ ((Nat.primeCounting n * k + 2 * n : ℕ) : ℝ) := by push_cast; linarith
+  exact_mod_cast e4
+
+lemma dbl' (n m k : ℕ) (hm : m = 2 * n) (hk : 2 ^ k ≤ n) :
+    Nat.primeCounting m * k ≤ Nat.primeCounting n * k + m := by
+  subst hm; exact dbl n k hk
+
+lemma pi_six (C6 : Nat.primeCounting 500000 ≤ 44444) :
+    10 * Nat.primeCounting (10 ^ 6) < 10 ^ 6 := by
+  have h : Nat.primeCounting 1000000 * 18 ≤ Nat.primeCounting 500000 * 18 + 1000000 :=
+    dbl' 500000 1000000 18 (by norm_num) (by norm_num)
+  rw [show (10 : ℕ) ^ 6 = 1000000 by norm_num]
+  omega
+
+lemma pi_seven (C4 : Nat.primeCounting (10 ^ 4) = 1229) :
+    10 * Nat.primeCounting (10 ^ 7) < 10 ^ 7 := by
+  have hs : Nat.primeCounting 9766 ≤ 1229 :=
+    C4 ▸ Nat.monotone_primeCounting (show 9766 ≤ 10 ^ 4 by norm_num)
+  have h0 : Nat.primeCounting 19532 * 13 ≤ Nat.primeCounting 9766 * 13 + 19532 :=
+    dbl' 9766 19532 13 (by norm_num) (by norm_num)
+  have h1 : Nat.primeCounting 39064 * 14 ≤ Nat.primeCounting 19532 * 14 + 39064 :=
+    dbl' 19532 39064 14 (by norm_num) (by norm_num)
+  have h2 : Nat.primeCounting 78128 * 15 ≤ Nat.primeCounting 39064 * 15 + 78128 :=
+    dbl' 39064 78128 15 (by norm_num) (by norm_num)
+  have h3 : Nat.primeCounting 156256 * 16 ≤ Nat.primeCounting 78128 * 16 + 156256 :=
+    dbl' 78128 156256 16 (by norm_num) (by norm_num)
+  have h4 : Nat.primeCounting 312512 * 17 ≤ Nat.primeCounting 156256 * 17 + 312512 :=
+    dbl' 156256 312512 17 (by norm_num) (by norm_num)
+  have h5 : Nat.primeCounting 625024 * 18 ≤ Nat.primeCounting 312512 * 18 + 625024 :=
+    dbl' 312512 625024 18 (by norm_num) (by norm_num)
+  have h6 : Nat.primeCounting 1250048 * 19 ≤ Nat.primeCounting 625024 * 19 + 1250048 :=
+    dbl' 625024 1250048 19 (by norm_num) (by norm_num)
+  have h7 : Nat.primeCounting 2500096 * 20 ≤ Nat.primeCounting 1250048 * 20 + 2500096 :=
+    dbl' 1250048 2500096 20 (by norm_num) (by norm_num)
+  have h8 : Nat.primeCounting 5000192 * 21 ≤ Nat.primeCounting 2500096 * 21 + 5000192 :=
+    dbl' 2500096 5000192 21 (by norm_num) (by norm_num)
+  have h9 : Nat.primeCounting 10000384 * 22 ≤ Nat.primeCounting 5000192 * 22 + 10000384 :=
+    dbl' 5000192 10000384 22 (by norm_num) (by norm_num)
+  have ht : Nat.primeCounting (10 ^ 7) ≤ Nat.primeCounting 10000384 :=
+    Nat.monotone_primeCounting (by norm_num)
+  rw [show (10 : ℕ) ^ 7 = 10000000 by norm_num] at ht ⊢
+  omega
+
+lemma pi_bounds (C4 : Nat.primeCounting (10 ^ 4) = 1229)
+    (C5 : Nat.primeCounting 100000 < 10000) (C6 : Nat.primeCounting 500000 ≤ 44444) :
     ∀ d, 5 ≤ d → 10 * Nat.primeCounting (10 ^ d) < 10 ^ d := by
   intro d hd
   by_cases h7 : 7 ≤ d
-  · exact pi_all (pi_seven K5 K6 K2) d h7
+  · exact pi_all (pi_seven C4) d h7
   · have hd' : d = 5 ∨ d = 6 := by omega
     rcases hd' with rfl | rfl
-    · rw [show (10 : ℕ) ^ 5 = 100000 by norm_num, K5]; norm_num
-    · rw [show (10 : ℕ) ^ 6 = 1000000 by norm_num, K6]; norm_num
+    · rw [show (10 : ℕ) ^ 5 = 100000 by norm_num]; omega
+    · exact pi_six C6
 
+/-! ### A vectorised bit count -/
+
+lemma bits_sum : ∀ (n Y : ℕ), Y < 2 ^ n →
+    Y = ∑ i ∈ Finset.range n, (if Y.testBit i = true then 2 ^ i else 0)
+  | 0, Y, h => by
+    simp only [pow_zero] at h
+    simp only [Finset.range_zero, Finset.sum_empty]
+    omega
+  | n + 1, Y, h => by
+    have ih := bits_sum n (Y / 2) (by rw [pow_succ] at h; omega)
+    rw [Finset.sum_range_succ']
+    simp only [Nat.testBit_add_one, pow_succ]
+    have h0 : (if Y.testBit 0 = true then 2 ^ 0 else 0) = Y % 2 := by
+      rw [Nat.testBit_zero]
+      rcases Nat.mod_two_eq_zero_or_one Y with h | h <;> simp [h]
+    have hs : ∑ i ∈ Finset.range n, (if (Y / 2).testBit i = true then 2 ^ i * 2 else 0)
+        = 2 * (Y / 2) := by
+      conv_rhs => rw [ih]
+      rw [Finset.mul_sum]
+      apply Finset.sum_congr rfl
+      intro i _
+      split_ifs <;> ring
+    rw [hs, h0]
+    omega
+
+lemma sum_range_mul (W K : ℕ) (g : ℕ → ℕ) :
+    ∑ i ∈ Finset.range (W * K), g i
+      = ∑ j ∈ Finset.range K, ∑ s ∈ Finset.range W, g (W * j + s) := by
+  induction K with
+  | zero => simp
+  | succ K ih => rw [Nat.mul_succ, Finset.sum_range_add, ih, Finset.sum_range_succ]
+
+lemma spread_mod (W K : ℕ) (e : ℕ → ℕ) :
+    (∑ j ∈ Finset.range K, e j * 2 ^ (W * j)) ≡ ∑ j ∈ Finset.range K, e j [MOD 2 ^ W - 1] := by
+  have h1 : 2 ^ W ≡ 1 [MOD 2 ^ W - 1] :=
+    ((Nat.modEq_iff_dvd' (Nat.one_le_two_pow)).mpr (dvd_refl _)).symm
+  induction K with
+  | zero => simp [Nat.ModEq]
+  | succ K ih =>
+    rw [Finset.sum_range_succ, Finset.sum_range_succ]
+    refine Nat.ModEq.add ih ?_
+    have h2 : 2 ^ (W * K) ≡ 1 [MOD 2 ^ W - 1] := by
+      rw [pow_mul]
+      simpa using h1.pow K
+    simpa using h2.mul_left (e K)
+
+/-- indicator of a bit -/
+def ebit (M i : ℕ) : ℕ := if M.testBit i = true then 1 else 0
+
+lemma ebit_le (M i : ℕ) : ebit M i ≤ 1 := by unfold ebit; split_ifs <;> omega
+
+/-- a number whose bits sit at multiples of `W` is counted by reduction mod `2 ^ W - 1` -/
+lemma spread_count (W K M r Y : ℕ) (hK : K < 2 ^ W - 1)
+    (hY : ∀ i, Y.testBit i = true ↔ (W ∣ i ∧ i < W * K) ∧ M.testBit (r + i) = true) :
+    Y % (2 ^ W - 1) = ∑ j ∈ Finset.range K, ebit M (r + W * j) := by
+  have hW : 0 < W := by
+    rcases Nat.eq_zero_or_pos W with h | h
+    · subst h; simp at hK
+    · exact h
+  have hlt : Y < 2 ^ (W * K) := by
+    apply Nat.lt_pow_two_of_testBit
+    intro i hi
+    rw [← Bool.not_eq_true, hY]
+    rintro ⟨⟨_, h⟩, _⟩
+    omega
+  have e1 : Y = ∑ j ∈ Finset.range K, ebit M (r + W * j) * 2 ^ (W * j) := by
+    conv_lhs => rw [bits_sum _ Y hlt, sum_range_mul]
+    apply Finset.sum_congr rfl
+    intro j hj
+    rw [Finset.mem_range] at hj
+    rw [Finset.sum_eq_single 0]
+    · have hj' : W * j < W * K := Nat.mul_lt_mul_of_pos_left hj hW
+      unfold ebit
+      by_cases hb : M.testBit (r + W * j) = true
+      · rw [if_pos hb, if_pos ((hY _).mpr ⟨⟨by simp, by simpa using hj'⟩, by simpa using hb⟩)]
+        simp
+      · rw [if_neg hb, if_neg (fun h => hb (by simpa using ((hY _).mp h).2))]
+        simp
+    · intro s hs hs0
+      rw [Finset.mem_range] at hs
+      rw [if_neg]
+      intro h
+      have hd := ((hY _).mp h).1.1
+      have : W ∣ s := (Nat.dvd_add_right (Dvd.intro j rfl)).mp hd
+      have := Nat.le_of_dvd (by omega) this
+      omega
+    · intro h; simp [hW] at h
+  have e2 := spread_mod W K (fun j => ebit M (r + W * j))
+  rw [← e1] at e2
+  rw [e2]
+  apply Nat.mod_eq_of_lt
+  refine lt_of_le_of_lt ?_ hK
+  calc ∑ j ∈ Finset.range K, ebit M (r + W * j) ≤ ∑ j ∈ Finset.range K, 1 :=
+        Finset.sum_le_sum (fun j _ => ebit_le _ _)
+    _ = K := by simp
+
+/-- the mask with bits at `W * j`, `j < K` -/
+def cmask (W K : ℕ) : ℕ := (2 ^ (W * K) - 1) / (2 ^ W - 1)
+
+lemma testBit_cmask {W : ℕ} (hW : 0 < W) (K i : ℕ) :
+    (cmask W K).testBit i = true ↔ W ∣ i ∧ i < W * K := by
+  unfold cmask
+  rw [OMA.SieveB.div_eq_geo hW, Nat.mul_mod_right, pow_zero, one_mul,
+    Nat.mul_div_cancel_left _ hW, OMA.SieveB.testBit_geo hW]
+
+/-- vectorised bit count of the low `W * K` bits of `M` -/
+def popc (W K M : ℕ) : ℕ → ℕ
+  | 0 => 0
+  | r + 1 => popc W K M r + Nat.land (Nat.shiftRight M r) (cmask W K) % (2 ^ W - 1)
+
+lemma popc_eq (W K M : ℕ) (hK : K < 2 ^ W - 1) : ∀ R : ℕ,
+    popc W K M R = ∑ r ∈ Finset.range R, ∑ j ∈ Finset.range K, ebit M (r + W * j) := by
+  have hW : 0 < W := by
+    rcases Nat.eq_zero_or_pos W with h | h
+    · subst h; simp at hK
+    · exact h
+  intro R
+  induction R with
+  | zero => simp [popc]
+  | succ R ih =>
+    rw [popc, ih, Finset.sum_range_succ]
+    congr 1
+    apply spread_count W K M R _ hK
+    intro i
+    show (M >>> R &&& cmask W K).testBit i = true ↔ _
+    rw [Nat.testBit_and, Nat.testBit_shiftRight, Bool.and_eq_true, testBit_cmask hW]
+    tauto
+
+lemma popc_total (W K M : ℕ) (hK : K < 2 ^ W - 1) :
+    popc W K M W = ∑ i ∈ Finset.range (W * K), ebit M i := by
+  rw [popc_eq W K M hK, sum_range_mul, Finset.sum_comm]
+  apply Finset.sum_congr rfl
+  intro j _
+  apply Finset.sum_congr rfl
+  intro s _
+  rw [Nat.add_comm]
+
+/-- prime counting through the sieve bit mask -/
+lemma primeCounting_eq_popc (N K : ℕ) (hN : N + 1 ≤ 16 * K) (hK : K < 65535) :
+    Nat.primeCounting N = popc 16 K (OMA.SieveB.primeBits N) 16 := by
+  rw [popc_total 16 K _ (by norm_num; omega)]
+  show Nat.count Nat.Prime (N + 1) = _
+  rw [Nat.count_eq_card_filter_range, Finset.card_filter]
+  have hsub : Finset.range (N + 1) ⊆ Finset.range (16 * K) :=
+    Finset.range_subset_range.mpr hN
+  rw [← Finset.sum_subset hsub]
+  · apply Finset.sum_congr rfl
+    intro i hi
+    rw [Finset.mem_range] at hi
+    unfold ebit
+    by_cases hp : i.Prime
+    · rw [if_pos hp, if_pos ((OMA.SieveB.testBit_primeBits N i).mpr ⟨by omega, hp⟩)]
+    · rw [if_neg hp, if_neg (fun h => hp ((OMA.SieveB.testBit_primeBits N i).mp h).2)]
+  · intro i _ hi
+    rw [Finset.mem_range] at hi
+    unfold ebit
+    rw [if_neg (fun h => hi (by have := ((OMA.SieveB.testBit_primeBits N i).mp h).1; omega))]
+
+lemma count_five : Nat.primeCounting 100000 < 10000 := by
+  rw [primeCounting_eq_popc 100000 6251 (by norm_num) (by norm_num)]
+  decide +kernel
+
+lemma count_six : Nat.primeCounting 500000 ≤ 44444 := by
+  rw [primeCounting_eq_popc 500000 31251 (by norm_num) (by norm_num)]
+  decide +kernel
 
 /-! ### Assembly -/
 
@@ -945,7 +1120,7 @@ lemma esc_false (HPi : ∀ d, 5 ≤ d → 10 * Nat.primeCounting (10 ^ d) < 10 ^
     have hle := tail_le HPi hx hP hper hn
     rw [primeCounting_four] at hle
     have hstep : stepC (aStartAt x n) = aStartAt x (n + 1) := by
-      rw [aStartAt_succ_pos hx, step, nth_eq_primes4 hle hpos, reverseDigits_eq]
+      rw [aStartAt_succ_pos hx, nth_eq_primes4 hle hpos, reverseDigits_eq]
       rfl
     rw [esc, if_neg (by omega), hstep]
     exact ih (n + 1) (by omega)
@@ -962,31 +1137,8 @@ theorem no_loop (HPi : ∀ d, 5 ≤ d → 10 * Nat.primeCounting (10 ^ d) < 10 ^
   rw [h1] at h2
   exact Bool.false_ne_true h2
 
-/-- The disproof from three prime counts, stated on the slow reference list. -/
-theorem no_loop_of_counts
-    (K5 : ((List.range (100000 + 1)).filter (fun m => decide m.Prime)).length = 9592)
-    (K6 : ((List.range (1000000 + 1)).filter (fun m => decide m.Prime)).length = 78498)
-    (K2 : ((List.range (2000000 + 1)).filter (fun m => decide m.Prime)).length = 148933) :
-    ¬ ∃ x : ℕ, 0 < x ∧ x ≠ 1 ∧ IsUltimatelyPeriodic (aStartAt x) :=
-  no_loop (pi_bounds ((primeCounting_eq_length _).trans K5)
-    ((primeCounting_eq_length _).trans K6) ((primeCounting_eq_length _).trans K2))
-
-end OMA.A100475
-
-
-namespace OMA.A100475
-
-lemma pc_of_sieve {n c : ℕ} (h : OMA.SieveB.primeCount n = c) : Nat.primeCounting n = c := by
-  rw [← h, OMA.SieveB.primeCount_eq]; rfl
-
-theorem count5 : OMA.SieveB.primeCount 100000 = 9592 := by decide +kernel
-
-theorem count6 : OMA.SieveB.primeCount 1000000 = 78498 := by decide +kernel
-
-theorem count2 : OMA.SieveB.primeCount 2000000 = 148933 := by decide +kernel
-
 end OMA.A100475
 
 theorem OMA.disproof : ¬ (type_of% @OeisA100475.conjecture) :=
-  OMA.A100475.no_loop (OMA.A100475.pi_bounds (OMA.A100475.pc_of_sieve OMA.A100475.count5)
-    (OMA.A100475.pc_of_sieve OMA.A100475.count6) (OMA.A100475.pc_of_sieve OMA.A100475.count2))
+  OMA.A100475.no_loop (OMA.A100475.pi_bounds OMA.A100475.primeCounting_four
+    OMA.A100475.count_five OMA.A100475.count_six)
