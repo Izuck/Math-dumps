@@ -591,29 +591,6 @@ lemma tail_le (HPi : ∀ d, 5 ≤ d → 10 * Nat.primeCounting (10 ^ d) < 10 ^ d
     exact Nat.pow_le_pow_right (by norm_num) (by omega)
 
 
-/-- trial division, valid below `101 ^ 2` -/
-def isP (n : ℕ) : Bool :=
-  decide (2 ≤ n) && (List.range 101).all
-    (fun m => !(decide (2 ≤ m) && decide (m * m ≤ n) && decide (n % m = 0)))
-
-lemma isP_iff {n : ℕ} (hn : n < 10201) : isP n = true ↔ n.Prime := by
-  rw [Nat.prime_def_le_sqrt]
-  simp only [isP, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, List.mem_range]
-  constructor
-  · rintro ⟨h2, hall⟩
-    refine ⟨h2, fun m hm hms hdvd => ?_⟩
-    have hmm : m * m ≤ n := Nat.le_sqrt.mp hms
-    have hm101 : m < 101 := by nlinarith
-    have := hall m hm101
-    simp [hm, hmm, Nat.mod_eq_zero_of_dvd hdvd] at this
-  · rintro ⟨h2, hall⟩
-    refine ⟨h2, fun m _ => ?_⟩
-    by_contra hc
-    simp only [Bool.not_eq_true', Bool.and_eq_false_iff, decide_eq_false_iff_not, not_or,
-      not_not] at hc
-    obtain ⟨⟨hm, hmm⟩, hmod⟩ := hc
-    exact hall m hm (Nat.le_sqrt.mpr hmm) (Nat.dvd_of_mod_eq_zero hmod)
-
 /-- the primes below `10 ^ 4` -/
 def primes4 : List ℕ := [
   2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71,
@@ -679,14 +656,10 @@ def primes4 : List ℕ := [
   9739, 9743, 9749, 9767, 9769, 9781, 9787, 9791, 9803, 9811, 9817, 9829, 9833, 9839, 9851, 9857, 9859, 9871, 9883, 9887,
   9901, 9907, 9923, 9929, 9931, 9941, 9949, 9967, 9973]
 
-lemma primes4_eq_isP : (List.range 10001).filter isP = primes4 := by decide +kernel
+lemma primes4_sieve : OMA.SieveB.primeList 10000 = primes4 := by decide +kernel
 
-lemma primes4_eq : (List.range 10001).filter (fun m => decide m.Prime) = primes4 := by
-  rw [← primes4_eq_isP]
-  apply List.filter_congr
-  intro m hm
-  rw [List.mem_range] at hm
-  rw [Bool.eq_iff_iff, decide_eq_true_eq, isP_iff (by omega)]
+lemma primes4_eq : (List.range 10001).filter (fun m => decide m.Prime) = primes4 :=
+  (OMA.SieveB.primeList_eq 10000).symm.trans primes4_sieve
 
 lemma length_filter_eq_count (N : ℕ) :
     ((List.range N).filter (fun m => decide m.Prime)).length = Nat.count Nat.Prime N := by
@@ -762,7 +735,23 @@ def esc : ℕ → ℕ → Bool
   | 0, _ => false
   | f + 1, k => if k = 0 ∨ 1229 < k then true else esc f (stepC k)
 
-lemma esc_all : (List.range 1230).all (esc 12) = true := by decide +kernel
+/-- all first images `stepC k`, taken directly from the list, escape within 11 steps -/
+def escL : List ℕ → Bool
+  | [] => true
+  | p :: ps => esc 11 (revAux p p 0) && escL ps
+
+lemma escL_spec : ∀ (L : List ℕ), escL L = true → ∀ i, i < L.length →
+    esc 11 (revAux (L.getD i 0) (L.getD i 0) 0) = true
+  | [], _, i, hi => by simp at hi
+  | p :: ps, h, i, hi => by
+    rw [escL, Bool.and_eq_true] at h
+    cases i with
+    | zero => exact h.1
+    | succ i => exact escL_spec ps h.2 i (by simpa using hi)
+
+lemma esc_all : escL primes4 = true := by decide +kernel
+
+lemma primes4_length : primes4.length = 1229 := by decide +kernel
 
 
 lemma pi_sub_mul_log_le {a b : ℕ} (hab : a ≤ b) :
@@ -1107,6 +1096,16 @@ lemma count_six : Nat.primeCounting 500000 ≤ 44444 := by
 
 /-! ### Assembly -/
 
+lemma stepC_eq (HPi : ∀ d, 5 ≤ d → 10 * Nat.primeCounting (10 ^ d) < 10 ^ d)
+    {x : ℕ} (hx : 0 < x) {N P : ℕ} (hP : 0 < P)
+    (hper : ∀ n, n ≥ N → aStartAt x (n + P) = aStartAt x n) {n : ℕ} (hn : n ≥ N) :
+    stepC (aStartAt x n) = aStartAt x (n + 1) := by
+  have hpos := aStartAt_pos hx n
+  have hle := tail_le HPi hx hP hper hn
+  rw [primeCounting_four] at hle
+  rw [aStartAt_succ_pos hx, nth_eq_primes4 hle hpos, reverseDigits_eq]
+  rfl
+
 lemma esc_false (HPi : ∀ d, 5 ≤ d → 10 * Nat.primeCounting (10 ^ d) < 10 ^ d)
     {x : ℕ} (hx : 0 < x) {N P : ℕ} (hP : 0 < P)
     (hper : ∀ n, n ≥ N → aStartAt x (n + P) = aStartAt x n) :
@@ -1119,10 +1118,7 @@ lemma esc_false (HPi : ∀ d, 5 ≤ d → 10 * Nat.primeCounting (10 ^ d) < 10 ^
     have hpos := aStartAt_pos hx n
     have hle := tail_le HPi hx hP hper hn
     rw [primeCounting_four] at hle
-    have hstep : stepC (aStartAt x n) = aStartAt x (n + 1) := by
-      rw [aStartAt_succ_pos hx, nth_eq_primes4 hle hpos, reverseDigits_eq]
-      rfl
-    rw [esc, if_neg (by omega), hstep]
+    rw [esc, if_neg (by omega), stepC_eq HPi hx hP hper hn]
     exact ih (n + 1) (by omega)
 
 /-- The disproof, with the prime-counting bounds as a hypothesis. -/
@@ -1132,9 +1128,10 @@ theorem no_loop (HPi : ∀ d, 5 ≤ d → 10 * Nat.primeCounting (10 ^ d) < 10 ^
   have hpos := aStartAt_pos hx N
   have hle := tail_le HPi hx hP hper (le_refl N)
   rw [primeCounting_four] at hle
-  have h1 := esc_false HPi hx hP hper 12 N (le_refl N)
-  have h2 := List.all_eq_true.mp esc_all (aStartAt x N) (List.mem_range.mpr (by omega))
-  rw [h1] at h2
+  have h1 := esc_false HPi hx hP hper 11 (N + 1) (by omega)
+  have h2 : esc 11 (stepC (aStartAt x N)) = true :=
+    escL_spec primes4 esc_all (aStartAt x N - 1) (by rw [primes4_length]; omega)
+  rw [stepC_eq HPi hx hP hper (le_refl N), h1] at h2
   exact Bool.false_ne_true h2
 
 end OMA.A100475
