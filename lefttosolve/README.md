@@ -32,8 +32,8 @@ All PASS entries were re-checked with `check.sh` (axioms: propext, Classical.cho
 
 | Problem | Kind | Result |
 |---|---|---|
-| `Erdos1182.erdos_1182.variants.ramsey_ge` | warm-up | PASS: 2n-1 <= R(K3, G) for connected G |
-| `Erdos770.erdos_770.variants.odd_h_unbounded` | warm-up | PASS: Dirichlet + quadratic reciprocity |
+| `Erdos1182.erdos_1182.variants.ramsey_ge` | warm-up | PASS: 2n-1 <= R(K3, G) for connected G. Solved on the site by someone else first (as of 2026-11-27) |
+| `Erdos770.erdos_770.variants.odd_h_unbounded` | warm-up | PASS: Dirichlet + quadratic reciprocity. Solved on the site by someone else first (as of 2026-11-27) |
 | `OeisA238281.conjecture_2` | open | PASS (disproof): Lean statement fails at n = 14, an off-by-one in the formalization; Sun's intended version holds for n < 300 |
 | `OeisA100475.conjecture` | open | PASS (disproof): reversal keeps digit length, pi(10^d) < 10^(d-1) for d >= 5, so loops need k <= 1229; none exist. Peak ~2.3 GB. Independent proof: upstream formal-conjectures marked it solved on 2026-11-26, citing an earlier Lean proof (Palomar registry PALOMAR-2026-11-11-000001) |
 | `OeisA92243.conjecture1` | open | PASS: a(261150) = 1, via a verified kernel sieve over all primes <= 3666581. Peak ~2.5 GB |
